@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Panel - Secure File Server</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f8f9fa; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .user { padding: 15px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; display: flex; justify-content: space-between; align-items: center; }
+        .pending { border-left: 4px solid #ffc107; background: #fff3cd; }
+        .approved { border-left: 4px solid #28a745; background: #d4edda; }
+        .btn { padding: 8px 15px; margin: 0 5px; text-decoration: none; border-radius: 3px; font-size: 14px; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .header { text-align: center; margin-bottom: 30px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ Admin Panel</h1>
+            <p>Manage user access and permissions</p>
+        </div>
+        
+        {user_list}
+        
+        <div style="text-align: center; margin-top: 30px;">
+            <a href="/" class="btn btn-secondary">← Back to Files</a>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Register - Secure File Server</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 50px; text-align: center; background: #f8f9fa; }
+        .container { max-width: 400px; margin: 0 auto; padding: 30px; background: white; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; }
+        button:hover { background: #218838; }
+        .link { margin-top: 20px; }
+        .link a { color: #007bff; text-decoration: none; }
+        .requirements { text-align: left; margin: 15px 0; padding: 15px; background: #f8f9fa; border-radius: 5px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>📝 Create Account</h2>
+        <form method="post" action="/register">
+            <input type="text" name="username" placeholder="Username (min 3 characters)" required minlength="3">
+            <input type="password" name="password" placeholder="Password (min 6 characters)" required minlength="6">
+            <button type="submit">Create Account</button>
+        </form>
+        
+        <div class="requirements">
+            <strong>Requirements:</strong>
+            <ul>
+                <li>Username: minimum 3 characters</li>
+                <li>Password: minimum 6 characters</li>
+            </ul>
+        </div>
+        
+        <div class="link">
+            <a href="/login">Already have an account? Login here</a>
+        </div>
+        <div class="link">
+            <a href="/">← Back to Home</a>
+        </div>
+    </div>
+</body>
+</html>

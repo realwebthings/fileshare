@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+    <title>FileShare Control</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 500px; margin: 50px auto; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .status { padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center; font-weight: bold; }
+        .stopped { background: #f8d7da; color: #721c24; }
+        .running { background: #d4edda; color: #155724; }
+        .button { display: inline-block; padding: 12px 24px; margin: 10px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; }
+        .button:hover { background: #0056b3; }
+        .start { background: #28a745; }
+        .start:hover { background: #1e7e34; }
+        .stop { background: #dc3545; }
+        .stop:hover { background: #c82333; }
+        .info { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; }
+        .credentials { background: #fff3cd; padding: 15px; border-radius: 8px; margin: 20px 0; }
+        .mobile-url { font-size: 18px; font-weight: bold; color: #007bff; }
+    </style>
+    <script>
+        function updateStatus() {
+            fetch('/status').then(r => r.json()).then(data => {
+                document.getElementById('status').className = 'status ' + (data.running ? 'running' : 'stopped');
+                document.getElementById('status').textContent = data.running ? 'Server: Running ✅' : 'Server: Stopped ⏹️';
+                
+                // Refresh page if server just started and password is not shown
+                if (data.running && document.getElementById('admin-password').textContent.includes('Will be created')) {
+                    setTimeout(() => location.reload(), 1000);
+                }
+            });
+        }
+        setInterval(updateStatus, 2000);
+    </script>
+</head>
+<body>
+    <div class="header">
+        <h1>📱 FileShare</h1>
+        <div id="status" class="status stopped">Server: Stopped ⏹️</div>
+    </div>
+    
+    <div style="text-align: center;">
+        <a href="/start" class="button start">🚀 Start Sharing</a>
+        <a href="/stop" class="button stop">🛑 Stop Sharing</a>
+        <a href="/quit" class="button" style="background: #6c757d; margin-top: 10px; display: block; max-width: 200px; margin-left: auto; margin-right: auto;">❌ Quit App</a>
+    </div>
+    
+    <div class="info">
+        <h3>📱 Mobile Access URLs:</h3>
+        <div class="mobile-url">{scheme}://{local_ip}:8000</div>
+        <div style="font-size: 14px; margin-top: 10px; color: #666;">
+            <strong>Alternative URLs:</strong><br>
+            • Local computer: {scheme}://localhost:8000<br>
+            • Same network: {scheme}://127.0.0.1:8000
+        </div>
+        <p><strong>Instructions:</strong></p>
+        <ol>
+            <li>Connect your phone to the same WiFi network</li>
+            <li>Open browser on your phone</li>
+            <li>Go to the first URL above ({scheme}://{local_ip}:8000)</li>
+            <li>Register account or login as admin</li>
+        </ol>
+        <div style="background: #e7f3ff; padding: 10px; border-radius: 5px; margin-top: 15px; font-size: 13px;">
+            <strong>🌐 Network Details:</strong><br>
+            • Your computer's IP address: <code>{local_ip}</code><br>
+            • File server port: <code>8000</code><br>
+            • Control panel port: <code>9000</code>
+        </div>
+    </div>
+    
+    <div class="credentials">
+        <h3>🔑 Admin Login:</h3>
+        <p><strong>Username:</strong> admin</p>
+        <p><strong>Password:</strong> <span id="admin-password">{admin_password}</span></p>
+        {password_note}
+    </div>
+    
+    <div class="info">
+        <h3>⚠️ Security Notes:</h3>
+        <ul>
+            <li>Only use on trusted networks</li>
+            <li>Server accessible to anyone on same WiFi</li>
+            <li>Close this window to stop server</li>
+        </ul>
+    </div>
+</body>
+</html>

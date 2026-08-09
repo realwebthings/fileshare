@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Secure File Server</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .file { margin: 10px 0; padding: 10px; border: 1px solid #ddd; }
+        .dir { background: #f0f0f0; }
+        a { text-decoration: none; color: #333; }
+        .header { background: #007bff; color: white; padding: 10px; margin-bottom: 20px; }
+        .copy-notification { position: fixed; top: 20px; right: 20px; background: #28a745; color: white; padding: 10px 15px; border-radius: 5px; display: none; z-index: 1000; }
+
+        .bulk-dropzone { border: 2px dashed #aaa; border-radius: 8px; padding: 18px; margin-bottom: 15px; text-align: center; background: #fafafa; transition: background 0.15s, border-color 0.15s; }
+        .bulk-dropzone.drag-over { background: #eaf4ff; border-color: #007bff; }
+        .bulk-dropzone button { background: #28a745; color: white; border: none; padding: 8px 18px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .bulk-note { color: #666; font-size: 12px; margin-top: 6px; }
+        .bulk-queue { margin-top: 12px; text-align: left; }
+        .bulk-aggregate { font-weight: bold; margin-bottom: 8px; }
+        .bulk-row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 4px 0; }
+        .bulk-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .bulk-bar { flex: 0 0 120px; height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; }
+        .bulk-bar-fill { height: 100%; background: #007bff; width: 0%; }
+        .bulk-row.failed .bulk-bar-fill { background: #dc3545; }
+        .bulk-row.done .bulk-bar-fill { background: #28a745; }
+        .bulk-retry-btn { background: #ffc107; border: none; border-radius: 3px; padding: 2px 8px; cursor: pointer; font-size: 11px; }
+
+        .transfers-panel { margin: 15px 0; }
+        .transfers-panel h4 { margin: 0 0 6px 0; font-size: 13px; color: #555; }
+        .transfer-entry { font-size: 13px; padding: 6px 10px; background: #f0f7ff; border-left: 3px solid #007bff; margin: 4px 0; border-radius: 3px; }
+    </style>
+    <script>
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(function() {
+                showNotification('Path copied to clipboard!');
+            }).catch(function(err) {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showNotification('Path copied to clipboard!');
+            });
+        }
+
+        function showNotification(message) {
+            const notification = document.getElementById('copy-notification');
+            notification.textContent = message;
+            notification.style.display = 'block';
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 2000);
+        }
+
+        // ---- Bulk / folder upload (chunked, resumable) ----
+        // Talks to POST /api/upload/create, PATCH /api/upload/<id>,
+        // HEAD /api/upload/<id> - see main.py's handle_upload_* functions.
+        const BULK_CHUNK_SIZE = 8 * 1024 * 1024; // 8MB
+        const BULK_MAX_CONCURRENT = 3;
+        const BULK_MAX_RETRIES = 5;
+        let bulkQueue = [];
+        let bulkActiveCount = 0;
+        let bulkUploadPath = null;
+
+        function initBulkUpload() {
+            const dropzone = document.getElementById('bulk-dropzone');
+            if (!dropzone) return;
+            bulkUploadPath = dropzone.dataset.uploadPath;
+
+            const folderInput = document.getElementById('bulk-folder-input');
+            const chooseBtn = document.getElementById('bulk-choose-btn');
+            const note = document.getElementById('bulk-note');
+
+            const supportsWebkitDirectory = 'webkitdirectory' in document.createElement('input');
+            if (!supportsWebkitDirectory) {
+                note.textContent = "Your browser can't upload whole folders - use the single-file form above, or select multiple files below (folder structure won't be preserved).";
+                folderInput.removeAttribute('webkitdirectory');
+                folderInput.multiple = true;
+            }
+
+            chooseBtn.addEventListener('click', () => folderInput.click());
+            folderInput.addEventListener('change', (e) => handleFileList(e.target.files));
+
+            dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+            dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+            dropzone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropzone.classList.remove('drag-over');
+                handleDropEvent(e);
+            });
+        }
+
+        function handleDropEvent(e) {
+            const items = e.dataTransfer.items;
+            if (!items || !items.length) return;
+            const walkers = [];
+            for (let i = 0; i < items.length; i++) {
+                const entry = items[i].webkitGetAsEntry && items[i].webkitGetAsEntry();
+                if (entry) walkers.push(walkEntry(entry, ''));
+            }
+            Promise.all(walkers).then(fileArrays => enqueueFiles(fileArrays.flat()));
+        }
+
+        function walkEntry(entry, prefix) {
+            return new Promise((resolve) => {
+                if (entry.isFile) {
+                    entry.file(file => {
+                        resolve([{ file, relativePath: prefix + entry.name }]);
+                    }, () => resolve([]));
+                } else if (entry.isDirectory) {
+                    const reader = entry.createReader();
+                    const all = [];
+                    const readBatch = () => {
+                        reader.readEntries(entries => {
+                            if (!entries.length) {
+                                Promise.all(all).then(arrays => resolve(arrays.flat()));
+                                return;
+                            }
+                            entries.forEach(child => all.push(walkEntry(child, prefix + entry.name + '/')));
+                            readBatch();
+                        }, () => resolve([]));
+                    };
+                    readBatch();
+                } else {
+                    resolve([]);
+                }
+            });
+        }
+
+        function handleFileList(fileList) {
+            const files = [];
+            for (let i = 0; i < fileList.length; i++) {
+                const f = fileList[i];
+                files.push({ file: f, relativePath: f.webkitRelativePath || f.name });
+            }
+            enqueueFiles(files);
+        }
+
+        function enqueueFiles(files) {
+            if (!files.length) return;
+            files.forEach(f => {
+                bulkQueue.push({
+                    file: f.file,
+                    relativePath: f.relativePath,
+                    size: f.file.size,
+                    sent: 0,
+                    status: 'queued', // queued -> uploading -> done | failed
+                    attempts: 0,
+                    uploadId: null,
+                    rowEl: null,
+                });
+            });
+            renderQueue();
+            startWorkers();
+        }
+
+        function fingerprintFor(item) {
+            return `fileshare_upload:${item.relativePath}|${item.size}|${item.file.lastModified}`;
+        }
+
+        function startWorkers() {
+            while (bulkActiveCount < BULK_MAX_CONCURRENT) {
+                const next = bulkQueue.find(i => i.status === 'queued');
+                if (!next) break;
+                next.status = 'uploading';
+                bulkActiveCount++;
+                uploadOneFile(next).finally(() => {
+                    bulkActiveCount--;
+                    startWorkers();
+                });
+            }
+        }
+
+        async function uploadOneFile(item) {
+            try {
+                await resumeOrCreate(item);
+                while (item.sent < item.size) {
+                    const chunk = item.file.slice(item.sent, item.sent + BULK_CHUNK_SIZE);
+                    const result = await sendChunkXHR(item.uploadId, item.sent, chunk, (loaded) => {
+                        renderRow(item, item.sent + loaded);
+                    });
+                    item.sent = result.offset;
+                    renderRow(item, item.sent);
+                    if (result.done) break;
+                }
+                item.status = 'done';
+                localStorage.removeItem(fingerprintFor(item));
+            } catch (err) {
+                item.attempts++;
+                if (item.attempts < BULK_MAX_RETRIES) {
+                    const delay = Math.min(1000 * Math.pow(2, item.attempts), 16000);
+                    await new Promise(r => setTimeout(r, delay));
+                    item.status = 'queued';
+                    startWorkers();
+                    return;
+                }
+                item.status = 'failed';
+            }
+            renderRow(item, item.sent);
+            renderAggregate();
+        }
+
+        async function resumeOrCreate(item) {
+            const fp = fingerprintFor(item);
+            const stored = localStorage.getItem(fp);
+            if (stored) {
+                try {
+                    const status = await getUploadStatus(stored);
+                    item.uploadId = stored;
+                    item.sent = status.offset;
+                    return;
+                } catch (e) {
+                    localStorage.removeItem(fp); // stale/unknown - fall through to create a fresh one
+                }
+            }
+            const created = await initUpload(bulkUploadPath, item.relativePath, item.size);
+            item.uploadId = created.upload_id;
+            item.sent = created.offset;
+            localStorage.setItem(fp, item.uploadId);
+        }
+
+        function initUpload(uploadPath, relativePath, size) {
+            return fetch('/api/upload/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ upload_path: uploadPath, relative_path: relativePath, size: size }),
+            }).then(r => {
+                if (!r.ok) throw new Error('create_failed_' + r.status);
+                return r.json();
+            });
+        }
+
+        function getUploadStatus(uploadId) {
+            return fetch('/api/upload/' + uploadId).then(r => {
+                if (!r.ok) throw new Error('status_failed_' + r.status);
+                return r.json();
+            });
+        }
+
+        function sendChunkXHR(uploadId, offset, blob, onProgress) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('PATCH', '/api/upload/' + uploadId);
+                xhr.setRequestHeader('Upload-Offset', String(offset));
+                xhr.upload.onprogress = (e) => onProgress(e.loaded);
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        resolve(JSON.parse(xhr.responseText));
+                    } else {
+                        reject(new Error('chunk_failed_' + xhr.status));
+                    }
+                };
+                xhr.onerror = () => reject(new Error('network_error'));
+                xhr.send(blob);
+            });
+        }
+
+        function retryFile(relativePath) {
+            const item = bulkQueue.find(i => i.relativePath === relativePath);
+            if (item) { item.status = 'queued'; item.attempts = 0; renderRow(item, item.sent); startWorkers(); }
+        }
+
+        function retryAllFailed() {
+            bulkQueue.filter(i => i.status === 'failed').forEach(i => { i.status = 'queued'; i.attempts = 0; });
+            renderQueue();
+            startWorkers();
+        }
+
+        function renderQueue() {
+            const panel = document.getElementById('bulk-queue-panel');
+            if (!panel) return;
+            panel.innerHTML = '<div class="bulk-aggregate" id="bulk-aggregate-line"></div><div id="bulk-rows"></div><button class="bulk-retry-btn" onclick="retryAllFailed()" style="margin-top:6px;">Retry all failed</button>';
+            const rows = document.getElementById('bulk-rows');
+            bulkQueue.forEach(item => {
+                const row = document.createElement('div');
+                row.className = 'bulk-row';
+                row.innerHTML = `<span class="name"></span><div class="bulk-bar"><div class="bulk-bar-fill"></div></div><span class="pct"></span><button class="bulk-retry-btn" style="display:none;">Retry</button>`;
+                row.querySelector('.name').textContent = item.relativePath;
+                row.querySelector('button').addEventListener('click', () => retryFile(item.relativePath));
+                item.rowEl = row;
+                rows.appendChild(row);
+            });
+            renderAggregate();
+        }
+
+        function renderRow(item, sentBytes) {
+            if (!item.rowEl) return;
+            const pct = item.size ? Math.min(100, Math.round((sentBytes / item.size) * 100)) : 100;
+            item.rowEl.className = 'bulk-row' + (item.status === 'done' ? ' done' : item.status === 'failed' ? ' failed' : '');
+            item.rowEl.querySelector('.bulk-bar-fill').style.width = pct + '%';
+            item.rowEl.querySelector('.pct').textContent = item.status === 'failed' ? 'failed' : pct + '%';
+            item.rowEl.querySelector('button').style.display = item.status === 'failed' ? 'inline-block' : 'none';
+            renderAggregate();
+        }
+
+        function renderAggregate() {
+            const line = document.getElementById('bulk-aggregate-line');
+            if (!line) return;
+            const total = bulkQueue.length;
+            const done = bulkQueue.filter(i => i.status === 'done').length;
+            const failed = bulkQueue.filter(i => i.status === 'failed').length;
+            line.textContent = `${done} of ${total} files done` + (failed ? ` · ${failed} failed` : '');
+        }
+
+        // ---- Live "who's transferring what" panel - polled by every
+        // logged-in user's page, same setInterval+fetch idiom already used
+        // in control_panel.html's updateStatus(). ----
+        function pollActiveTransfers() {
+            fetch('/api/transfers').then(r => r.ok ? r.json() : { transfers: [] }).then(data => {
+                const panel = document.getElementById('active-transfers-panel');
+                if (!panel) return;
+                if (!data.transfers || !data.transfers.length) {
+                    panel.innerHTML = '';
+                    return;
+                }
+                let html = '<h4>🔄 Active transfers</h4>';
+                data.transfers.forEach(t => {
+                    html += `<div class="transfer-entry">${escapeHtml(t.user)} → ${escapeHtml(t.relative_path)} (${t.percent}%)</div>`;
+                });
+                panel.innerHTML = html;
+            }).catch(() => {});
+        }
+
+        function escapeHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initBulkUpload();
+            pollActiveTransfers();
+            setInterval(pollActiveTransfers, 2500);
+        });
+    </script>
+</head>
+<body>
+    <div id="copy-notification" class="copy-notification"></div>
+    <div class="header">🔒 Secure File Server</div>
+    <div style="margin-bottom: 20px;">{path}</div>
+    <div id="active-transfers-panel" class="transfers-panel"></div>
+    {upload_form}
+    {bulk_upload_widget}
+    {parent_link}
+    {file_list}
+</body>
+</html>
