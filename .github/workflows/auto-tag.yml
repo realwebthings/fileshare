@@ -1,0 +1,57 @@
+name: Auto Tag on Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  bump-and-tag:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Compute next patch version
+        id: bump
+        run: |
+          latest=$(git tag --list 'v*.*.*' | sort -V | tail -n1)
+          if [ -z "$latest" ]; then
+            new="v1.0.0"
+          else
+            ver="${latest#v}"
+            major="${ver%%.*}"
+            rest="${ver#*.}"
+            minor="${rest%%.*}"
+            patch="${rest#*.}"
+            patch=$((patch + 1))
+            new="v${major}.${minor}.${patch}"
+          fi
+          echo "new_version=$new" >> "$GITHUB_OUTPUT"
+          echo "new_version_bare=${new#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Update hardcoded version strings
+        run: |
+          v="${{ steps.bump.outputs.new_version_bare }}"
+          sed -i "s/version = \"[0-9]*\.[0-9]*\.[0-9]*\"/version = \"$v\"/" linux/build-deb.py linux/build-rpm.py
+          sed -i "s/'version': '[0-9]*\.[0-9]*\.[0-9]*'/'version': '$v'/" linux/build-snap.py
+          sed -i "s/version: '[0-9]*\.[0-9]*\.[0-9]*'/version: '$v'/" linux/build-snap.py
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add linux/build-deb.py linux/build-rpm.py linux/build-snap.py
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.new_version }} [skip ci]" || echo "nothing to commit"
+          git push origin main
+
+      - name: Tag release
+        run: |
+          git tag ${{ steps.bump.outputs.new_version }}
+          git push origin ${{ steps.bump.outputs.new_version }}
