@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  linux-packages:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq dpkg-dev
+
+      - name: Build .run installer
+        run: python3 build-run.py
+        working-directory: linux
+
+      - name: Build .deb package
+        run: python3 build-deb.py
+        working-directory: linux
+
+      - name: Collect Linux artifacts
+        run: |
+          mkdir -p /tmp/artifacts
+          cp linux/releases/run/fileshare-installer.run /tmp/artifacts/
+          cp linux/releases/deb/fileshare_*.deb /tmp/artifacts/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: /tmp/artifacts/*
+
+  linux-rpm:
+    runs-on: ubuntu-24.04
+    container: fedora:latest
+    steps:
+      - name: Install git (needed for actions/checkout inside the container)
+        run: dnf install -y -q git python3 rpm-build
+
+      - uses: actions/checkout@v4
+
+      - name: Build .rpm package
+        run: python3 build-rpm.py
+        working-directory: linux
+
+      - name: Collect rpm artifact
+        run: |
+          mkdir -p /tmp/artifacts
+          find linux/releases/rpm/RPMS -name '*.rpm' -exec cp {} /tmp/artifacts/ \;
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-rpm
+          path: /tmp/artifacts/*
+
+  macos-app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: pip install pyinstaller cryptography
+
+      - name: Build .app
+        run: python3 macos/build-app.py
+
+      - name: Zip .app bundle
+        run: |
+          mkdir -p /tmp/artifacts
+          cd macos/releases
+          zip -r -q /tmp/artifacts/fileShare-macOS.zip fileShare.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: /tmp/artifacts/*
+
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: pip install pyinstaller cryptography
+
+      - name: Build .exe
+        run: python windows\build-exe.py
+
+      - name: Zip build output
+        run: |
+          mkdir /tmp/artifacts
+          Compress-Archive -Path windows\releases\fileShare -DestinationPath /tmp/artifacts/fileShare-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: /tmp/artifacts/*
+
+  publish-release:
+    needs: [linux-packages, linux-rpm, macos-app, windows-exe]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/all-artifacts
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: FileShare ${{ github.ref_name }}
+          body_path: linux/GITHUB-RELEASE.md
+          files: /tmp/all-artifacts/**/*
