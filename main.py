@@ -2414,8 +2414,12 @@ def main():
     # Line-buffer stdout so startup info (admin password, URLs) shows up
     # immediately even when output is redirected to a file/log (headless
     # runs, systemd, packaged launchers) instead of sitting in a buffer.
+    # Also force UTF-8 - Windows consoles default to a legacy codepage
+    # (e.g. cp1252) that can't encode the emoji used throughout these
+    # print statements, which crashes with UnicodeEncodeError otherwise.
     try:
-        sys.stdout.reconfigure(line_buffering=True)
+        sys.stdout.reconfigure(line_buffering=True, encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
     except AttributeError:
         pass
 

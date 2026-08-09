@@ -240,6 +240,15 @@ class ControlPanelHandler(BaseHTTPRequestHandler):
         threading.Thread(target=shutdown_server, daemon=True).start()
 
 def main():
+    # Force UTF-8 stdout/stderr - Windows consoles default to a legacy
+    # codepage (e.g. cp1252) that can't encode the emoji used in these
+    # print statements, which crashes with UnicodeEncodeError otherwise.
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
     # Setup logging for packaged desktop apps (macOS/Windows) that have no
     # attached console to print to.
     if getattr(sys, 'frozen', False):

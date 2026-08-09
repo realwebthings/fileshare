@@ -15,6 +15,14 @@ import os
 import sys
 import subprocess
 
+if sys.platform == 'win32':
+    # Windows consoles default to a legacy codepage (e.g. cp1252) that
+    # can't encode the emoji used in these print statements - force UTF-8
+    # so this doesn't crash with UnicodeEncodeError on a plain `python
+    # build-exe.py` run outside a UTF-8-configured terminal.
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+
 
 def build_windows_exe():
     if sys.platform != 'win32':
